@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useVerifiedEmployees } from '../hooks/useLeaves';
 import { API_BASE_URL } from '../utils/config';
 import { useToast } from '../context/ToastContext';
-import { Loader2, Calendar, Shield, AlertCircle } from 'lucide-react';
+import { Loader2, Calendar, Shield, AlertCircle, Filter } from 'lucide-react';
+import { getPaidDays } from '../utils/leaveUtils';
 
 export default function AdminEmployeeLeaves() {
   const { data: employees = [], isLoading: loadingEmployees } = useVerifiedEmployees();
@@ -13,6 +14,7 @@ export default function AdminEmployeeLeaves() {
   const [leaves, setLeaves] = useState([]);
   const [loadingLeaves, setLoadingLeaves] = useState(false);
   const [updatingId, setUpdatingId] = useState(null);
+  const [partialLeaveConfig, setPartialLeaveConfig] = useState(null);
 
   // Fetch leaves for the selected employee
   const fetchLeaves = async (employeeId) => {
@@ -48,7 +50,7 @@ export default function AdminEmployeeLeaves() {
     setSelectedMonth(`${year}-${month}`);
   }, []);
 
-  const handleAdjustTreatment = async (leaveId, treatment) => {
+  const handleAdjustTreatment = async (leaveId, treatment, paidDaysCount = null) => {
     setUpdatingId(leaveId);
     try {
       const token = localStorage.getItem('token');
@@ -58,7 +60,7 @@ export default function AdminEmployeeLeaves() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ leave_id: leaveId, treatment })
+        body: JSON.stringify({ leave_id: leaveId, treatment, paid_days_count: paidDaysCount })
       });
       
       if (!res.ok) {
@@ -92,6 +94,13 @@ export default function AdminEmployeeLeaves() {
     const month = String(leaveDate.getMonth() + 1).padStart(2, '0');
     return `${year}-${month}`;
   }))).sort((a, b) => b.localeCompare(a)); // Sort descending
+
+  const handleSavePartial = () => {
+    if (partialLeaveConfig) {
+      handleAdjustTreatment(partialLeaveConfig.leaveId, 'partial', partialLeaveConfig.currentPaidDays);
+      setPartialLeaveConfig(null);
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto w-full min-h-[calc(100vh-8rem)] flex flex-col font-sans pb-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -190,7 +199,7 @@ export default function AdminEmployeeLeaves() {
                       <th className="pb-3 pl-2">Dates</th>
                       <th className="pb-3">Type</th>
                       <th className="pb-3 text-center">Duration</th>
-                      <th className="pb-3 text-center">Paid Days</th>
+                      <th className="pb-3 text-center">Breakdown</th>
                       <th className="pb-3">Reason</th>
                       <th className="pb-3">Status</th>
                       <th className="pb-3 pr-2">Adjustment (LOP Option)</th>
@@ -200,9 +209,14 @@ export default function AdminEmployeeLeaves() {
                     {filteredLeaves.map(leave => {
                       const start = new Date(leave.start_date).toLocaleDateString();
                       const end = new Date(leave.end_date).toLocaleDateString();
-                      const isExtraLeave = leave.paid_days < leave.total_days || leave.leave_type.toLowerCase().includes('unpaid') || leave.leave_type.toLowerCase().includes('lop');
+                      
 
-                      const currentTreatment = (leave.leave_type.toLowerCase().includes('unpaid') || leave.leave_type.toLowerCase().includes('lop')) ? 'unpaid' : 'paid';
+                      const calculatedPaidDays = getPaidDays(leave);
+
+                      const isExtraLeave = calculatedPaidDays < leave.total_days || leave.leave_type.toLowerCase().includes('unpaid') || leave.leave_type.toLowerCase().includes('lop');
+
+                      const currentTreatment = leave.leave_type.includes('Partially Paid') ? 'partial' 
+                        : (leave.leave_type.toLowerCase().includes('unpaid') || leave.leave_type.toLowerCase().includes('lop')) ? 'unpaid' : 'paid';
 
                       return (
                         <tr key={leave.id} className="hover:bg-gray-50/50 transition-colors">
@@ -215,7 +229,16 @@ export default function AdminEmployeeLeaves() {
                             </span>
                           </td>
                           <td className="py-4 text-center font-medium text-gray-800">{leave.total_days} {leave.total_days === 1 ? 'Day' : 'Days'}</td>
-                          <td className="py-4 text-center font-bold text-[#7e57c2]">{leave.paid_days} {leave.paid_days === 1 ? 'Day' : 'Days'}</td>
+                          <td className="py-4 text-center">
+                            <div className="flex flex-col items-center gap-1.5">
+                              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 w-20 text-center">
+                                {calculatedPaidDays} Paid
+                              </span>
+                              <span className="text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100 w-20 text-center">
+                                {leave.total_days - calculatedPaidDays} Unpaid
+                              </span>
+                            </div>
+                          </td>
                           <td className="py-4 text-gray-600 max-w-xs truncate" title={leave.reason}>{leave.reason}</td>
                           <td className="py-4">
                             <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${leave.status === 'approved' ? 'bg-emerald-100 text-emerald-800' : leave.status === 'rejected' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'}`}>
@@ -228,10 +251,17 @@ export default function AdminEmployeeLeaves() {
                                 <select
                                   disabled={updatingId === leave.id}
                                   value={currentTreatment}
-                                  onChange={(e) => handleAdjustTreatment(leave.id, e.target.value)}
+                                  onChange={(e) => {
+                                    if (e.target.value === 'partial') {
+                                      setPartialLeaveConfig({ leaveId: leave.id, totalDays: leave.total_days, currentPaidDays: calculatedPaidDays });
+                                    } else {
+                                      handleAdjustTreatment(leave.id, e.target.value);
+                                    }
+                                  }}
                                   className={`px-3 py-1.5 border rounded-lg text-xs font-medium outline-none bg-white cursor-pointer ${isExtraLeave ? 'border-amber-200 bg-amber-50/30 focus:ring-2 focus:ring-amber-500' : 'border-gray-200 focus:ring-2 focus:ring-[#7e57c2]'}`}
                                 >
                                   <option value="paid">Paid (Cover by future comp-off)</option>
+                                  <option value="partial">Partially Paid (Custom)</option>
                                   <option value="unpaid">Unpaid (Loss of Pay)</option>
                                 </select>
                                 {updatingId === leave.id && (
@@ -255,6 +285,54 @@ export default function AdminEmployeeLeaves() {
           <Calendar className="w-12 h-12 text-gray-400 mb-3" />
           <h3 className="text-lg font-bold text-gray-700">No Employee Selected</h3>
           <p className="text-gray-500 text-sm mt-1 max-w-sm">Please select an employee from the dropdown above to view and adjust their leave records.</p>
+        </div>
+      )}
+
+      {/* Partial Payment Modal */}
+      {partialLeaveConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Adjust Paid Days</h3>
+            <p className="text-sm text-gray-500 mb-6">Specify how many days should be paid out of the total <strong>{partialLeaveConfig.totalDays} days</strong> of leave.</p>
+
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Paid Days</label>
+              <input 
+                type="number" 
+                min="0"
+                max={partialLeaveConfig.totalDays}
+                value={partialLeaveConfig.currentPaidDays ?? 0}
+                onChange={(e) => setPartialLeaveConfig(prev => ({ 
+                  ...prev, 
+                  currentPaidDays: Math.max(0, Math.min(parseInt(e.target.value) || 0, prev.totalDays)) 
+                }))}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7e57c2] focus:border-transparent outline-none font-bold text-lg text-gray-900"
+              />
+            </div>
+
+            <div className="p-4 bg-[#7e57c2]/5 rounded-xl border border-[#7e57c2]/20 mb-6">
+               <div className="flex justify-between items-center mb-2">
+                 <span className="text-sm text-gray-600 font-medium">Paid Days</span>
+                 <span className="text-sm font-bold text-[#7e57c2]">{partialLeaveConfig.currentPaidDays ?? 0} days</span>
+               </div>
+               <div className="flex justify-between items-center">
+                 <span className="text-sm text-gray-600 font-medium">Unpaid (LOP)</span>
+                 <span className="text-sm font-bold text-red-600">{partialLeaveConfig.totalDays - (partialLeaveConfig.currentPaidDays ?? 0)} days</span>
+               </div>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button 
+                onClick={() => setPartialLeaveConfig(null)}
+                className="px-5 py-2.5 text-sm font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button onClick={handleSavePartial} className="px-5 py-2.5 text-sm font-bold text-white bg-[#7e57c2] hover:bg-[#6c48a8] rounded-xl transition-colors shadow-sm shadow-purple-500/20">
+                Save Adjustment
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

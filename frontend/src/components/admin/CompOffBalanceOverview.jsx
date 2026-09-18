@@ -1,13 +1,143 @@
 import React, { useState } from 'react';
 import { useAdminEmployees } from '../../hooks/useAdminEmployees';
 import { useCompOffHistory } from '../../hooks/useCompOff';
-import { Search, TrendingUp, Users, X, Calendar } from 'lucide-react';
+import { Search, TrendingUp, Users, X, Calendar, PlusCircle } from 'lucide-react';
+import { API_BASE_URL } from '../../utils/config';
 
 export default function CompOffBalanceOverview() {
   const { filteredEmployees, isLoading } = useAdminEmployees();
   const { data: compOffHistory = [] } = useCompOffHistory();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState(null);
+  
+  const [isAdjusting, setIsAdjusting] = useState(false);
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustReason, setAdjustReason] = useState('');
+  const [adjustType, setAdjustType] = useState('standard');
+  const [actionType, setActionType] = useState('add');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [standardHistory, setStandardHistory] = useState([]);
+  const [lopHistory, setLopHistory] = useState([]);
+  const [employeeLeaves, setEmployeeLeaves] = useState([]);
+
+  const fetchLopHistory = async (id) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/lop/history?employeeId=${id}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (res.ok) setLopHistory(await res.json());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchEmployeeLeaves = async (id) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/leaves/employee/${id}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (res.ok) setEmployeeLeaves(await res.json());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  React.useEffect(() => {
+    if (selectedEmployee) {
+      const token = localStorage.getItem('token');
+      
+      fetch(`${API_BASE_URL}/api/admin/adjust-balance/history?employeeId=${selectedEmployee.id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      .then(res => res.json())
+      .then(data => setStandardHistory(data))
+      .catch(console.error);
+
+      fetchLopHistory(selectedEmployee.id);
+      fetchEmployeeLeaves(selectedEmployee.id);
+    }
+  }, [selectedEmployee]);
+
+  const markLopMutation = {
+    mutate: async (data, { onSuccess, onError }) => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/mark-lop`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+          body: JSON.stringify(data)
+        });
+        if (!res.ok) throw new Error('Failed to mark LOP');
+        const result = await res.json();
+        
+        if (selectedEmployee) fetchLopHistory(selectedEmployee.id);
+        if (onSuccess) onSuccess(result);
+      } catch (error) {
+        if (onError) onError(error);
+      }
+    }
+  };
+
+  const handleAdjustBalance = async () => {
+    if (!adjustAmount) return;
+    setIsSubmitting(true);
+    try {
+      const token = localStorage.getItem('token');
+      const isCompOff = adjustType === 'compoff';
+      const endpoint = isCompOff ? '/api/admin/comp-off/grant' : '/api/admin/adjust-balance';
+      
+      let finalAmount = Math.abs(Number(adjustAmount));
+      if (actionType === 'deduct') {
+        finalAmount = -finalAmount;
+      }
+      
+      // If it's standard leaves, a deduction in UI implies adding to backend udhaar, so flip sign for standard
+      if (adjustType === 'standard') {
+          finalAmount = -finalAmount; // deduct UI = + backend, add UI = - backend
+      }
+
+      const payload = isCompOff 
+        ? { employeeId: selectedEmployee.id, daysGranted: finalAmount, reason: adjustReason || 'Manual Adjustment', workedDates: [] }
+        : { employeeId: selectedEmployee.id, amount: finalAmount, reason: adjustReason };
+
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        queryClient.invalidateQueries(['verified_employees']);
+        queryClient.invalidateQueries(['comp_off_history']);
+        
+        setSelectedEmployee(prev => ({
+          ...prev,
+          available_leaves: isCompOff ? prev.available_leaves : prev.available_leaves + finalAmount,
+          comp_off_leaves: isCompOff ? (prev.comp_off_leaves || 0) + finalAmount : prev.comp_off_leaves
+        }));
+
+        if (!isCompOff) {
+          fetch(`${API_BASE_URL}/api/admin/adjust-balance/history?employeeId=${selectedEmployee.id}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+          .then(res => res.json())
+          .then(data => setStandardHistory(data));
+        }
+
+        setIsAdjusting(false);
+        setAdjustAmount('');
+        setAdjustReason('');
+      } else {
+        alert("Failed to adjust balance");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error adjusting balance");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   // Filter only employees, not HR/Admins
   const employees = filteredEmployees?.filter(e => e.role === 'employee') || [];
@@ -19,7 +149,6 @@ export default function CompOffBalanceOverview() {
   );
 
   const getEmployeeCompOffs = (empId) => {
-    console.log("[Frontend Component] Rendering getEmployeeCompOffs in CompOffBalanceOverview.jsx");
     return compOffHistory.filter(c => c.employeeId === empId);
   };
 
@@ -64,23 +193,24 @@ export default function CompOffBalanceOverview() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {displayed.map(emp => {
-                const totalBal = emp.available_leaves + (emp.comp_off_leaves || 0);
-                const percentage = Math.min((totalBal / (emp.total_leaves || 20)) * 100, 100);
-                const isHigh = totalBal > 15;
+                const totalBal = (emp.comp_off_leaves || 0) + (emp.available_leaves || 0);
+                const percentage = Math.min(Math.max((totalBal / (emp.total_leaves || 20)) * 100, 0), 100);
+                const isHigh = totalBal > 5;
+                const isNegative = totalBal < 0;
                 
                 return (
                   <div 
                     key={emp.id} 
                     onClick={() => setSelectedEmployee(emp)}
-                    className="p-4 rounded-xl border border-gray-100 hover:border-purple-200 hover:shadow-md transition-all group cursor-pointer"
+                    className={`p-4 rounded-xl border hover:shadow-md transition-all group cursor-pointer ${isNegative ? 'border-red-200 bg-red-50/30' : 'border-gray-100 hover:border-purple-200'}`}
                   >
                     <div className="flex justify-between items-start mb-3 gap-2">
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-gray-900 group-hover:text-[#7e57c2] transition-colors truncate" title={emp.full_name}>{emp.full_name}</p>
-                        <p className="text-[11px] text-gray-400 truncate" title={emp.email}>{emp.email}</p>
+                        <p className={`font-semibold text-gray-900 group-hover:text-[#7e57c2] transition-colors truncate`}>{emp.full_name}</p>
+                        <p className="text-[11px] text-gray-400 truncate">{emp.email}</p>
                         <p className="text-xs text-gray-500 mt-0.5 truncate">{emp.designation || 'Employee'}</p>
                       </div>
-                      <span className={`px-2 py-1 rounded-md text-xs font-bold ${isHigh ? 'bg-green-50 text-green-700' : 'bg-purple-50 text-[#7e57c2]'}`}>
+                      <span className={`px-2 py-1 rounded-md text-xs font-bold ${isNegative ? 'bg-red-100 text-red-700' : isHigh ? 'bg-green-50 text-green-700' : 'bg-purple-50 text-[#7e57c2]'}`}>
                         {totalBal} days
                       </span>
                     </div>
@@ -92,7 +222,7 @@ export default function CompOffBalanceOverview() {
                       </div>
                       <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
                         <div 
-                          className={`h-full rounded-full transition-all duration-1000 ${isHigh ? 'bg-green-500' : 'bg-[#7e57c2]'}`}
+                          className={`h-full rounded-full transition-all duration-1000 ${isNegative ? 'bg-red-500' : isHigh ? 'bg-green-500' : 'bg-[#7e57c2]'}`}
                           style={{ width: `${percentage}%` }}
                         ></div>
                       </div>
@@ -123,33 +253,129 @@ export default function CompOffBalanceOverview() {
             </div>
             
             <div className="p-6 overflow-auto custom-scrollbar flex-1">
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="p-4 bg-purple-50 rounded-xl flex flex-col justify-center">
-                  <p className="text-xs font-medium text-purple-900 mb-1">Standard Leaves</p>
-                  <div className="text-2xl font-black text-[#7e57c2]">
-                    {selectedEmployee.available_leaves} <span className="text-sm font-medium">days</span>
+              {(() => {
+                const getPaidDays = (leave) => {
+                  if (leave.paid_days !== null && leave.paid_days !== undefined) return leave.paid_days;
+                  if (!leave.leave_type) return leave.total_days;
+                  if (leave.leave_type.includes("Partially Paid")) return 0;
+                  const paidMatch = leave.leave_type.match(/(\d+(\.\d+)?)\s*Paid/i);
+                  if (paidMatch) return parseFloat(paidMatch[1]);
+                  if (leave.leave_type.toLowerCase().includes('unpaid') || leave.leave_type.toLowerCase().includes('lop')) return 0;
+                  return leave.total_days;
+                };
+                const approvedLeaves = employeeLeaves.filter(l => l.status === 'approved');
+                const totalPaidLeaves = approvedLeaves.reduce((acc, curr) => acc + getPaidDays(curr), 0);
+                const totalUnpaidLeaves = approvedLeaves.reduce((acc, curr) => acc + (curr.total_days - getPaidDays(curr)), 0);
+
+                const totalCompOffsGranted = compOffHistory.filter(c => c.status === 'approved' && c.employeeId === selectedEmployee.id).reduce((acc, curr) => acc + (curr.daysGranted || 0), 0);
+                const totalStandardAllocated = selectedEmployee.total_leaves || 0;
+
+                const totalLeavesTaken = totalPaidLeaves + totalUnpaidLeaves;
+                const compOffsUsed = Math.min(totalLeavesTaken, totalCompOffsGranted);
+                const standardUsed = totalLeavesTaken - compOffsUsed;
+
+                const trueCompOffBalance = totalCompOffsGranted - compOffsUsed;
+                const trueStandardBalance = totalStandardAllocated - standardUsed;
+                const trueTotalBalance = trueCompOffBalance + trueStandardBalance;
+
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div className={`p-4 rounded-xl flex flex-col justify-center ${trueStandardBalance < 0 ? 'bg-purple-50' : 'bg-blue-50'}`}>
+                        <p className={`text-xs font-medium mb-1 ${trueStandardBalance < 0 ? 'text-purple-900' : 'text-blue-900'}`}>
+                          {trueStandardBalance < 0 ? 'Leaves Taken (Udhaar)' : 'Standard Leave Balance'}
+                        </p>
+                        <div className={`text-2xl font-black ${trueStandardBalance < 0 ? 'text-[#7e57c2]' : 'text-blue-700'}`}>
+                          {Math.abs(trueStandardBalance)} <span className="text-sm font-medium">days</span>
+                        </div>
+                      </div>
+                      <div className="p-4 bg-green-50 rounded-xl flex flex-col justify-center">
+                        <p className="text-xs font-medium text-green-900 mb-1">Comp-Off Balance</p>
+                        <div className="text-2xl font-black text-green-700">
+                          {trueCompOffBalance} <span className="text-sm font-medium">days</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-100 rounded-xl mb-3">
+                      <div>
+                        <p className="text-sm font-bold text-gray-900">Total Available Balance</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Comp-Offs + Standard Balance</p>
+                      </div>
+                      <div className="text-xl font-black text-gray-900">
+                        {trueTotalBalance} <span className="text-sm font-medium">days</span>
+                      </div>
+                    </div>
+
+                    {selectedEmployee && (
+                      <div className="flex gap-4 mb-6">
+                        <div className="flex-1 p-3 bg-emerald-50 rounded-xl border border-emerald-100 flex flex-col justify-center">
+                          <p className="text-xs font-semibold text-emerald-800 mb-1">Approved Paid Leaves</p>
+                          <p className="text-lg font-black text-emerald-700">
+                            {totalPaidLeaves} <span className="text-sm font-medium">days</span>
+                          </p>
+                        </div>
+                        <div className="flex-1 p-3 bg-red-50 rounded-xl border border-red-100 flex flex-col justify-center">
+                          <p className="text-xs font-semibold text-red-800 mb-1">Approved Unpaid (LOP)</p>
+                          <p className="text-lg font-black text-red-700">
+                            {totalUnpaidLeaves} <span className="text-sm font-medium">days</span>
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+
+              {lopHistory.length > 0 && (
+                <div className="mb-6">
+                  <h4 className="font-bold text-red-900 mb-4 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-red-700" />
+                    LOP History
+                  </h4>
+                  <div className="space-y-3">
+                    {lopHistory.map((log, i) => (
+                      <div key={i} className="flex justify-between items-center p-3 bg-red-50 border border-red-100 rounded-lg">
+                        <div>
+                          <p className="text-sm font-medium text-red-900">{log.action}</p>
+                          <p className="text-xs text-red-500 mt-1">Marked on: {new Date(log.created_at).toLocaleDateString()}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-                <div className="p-4 bg-green-50 rounded-xl flex flex-col justify-center">
-                  <p className="text-xs font-medium text-green-900 mb-1">Comp-Off Balance</p>
-                  <div className="text-2xl font-black text-green-700">
-                    {selectedEmployee.comp_off_leaves || 0} <span className="text-sm font-medium">days</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-100 rounded-xl mb-6">
-                <div>
-                  <p className="text-sm font-bold text-gray-900">Total Available Balance</p>
-                  <p className="text-xs text-gray-500 mt-0.5">Standard + Comp-Offs</p>
-                </div>
-                <div className="text-xl font-black text-gray-900">
-                  {(selectedEmployee.available_leaves || 0) + (selectedEmployee.comp_off_leaves || 0)} <span className="text-sm font-medium">days</span>
-                </div>
-              </div>
+              )}
 
               <h4 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-[#7e57c2]" />
+                Leaves Taken History
+              </h4>
+              
+              <div className="space-y-3 mb-6">
+                {standardHistory.length === 0 ? (
+                  <div className="text-center p-6 border border-dashed border-gray-200 rounded-xl bg-gray-50 text-gray-500 text-sm">
+                    No manual adjustments have been made to leaves taken.
+                  </div>
+                ) : (
+                  standardHistory.map(log => (
+                    <div key={log.id} className="p-4 border border-gray-100 rounded-xl hover:border-purple-200 transition-colors bg-white shadow-sm">
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="font-medium text-gray-900 text-sm">{log.action.split('. Reason: ')[1] || 'No reason'}</span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold whitespace-nowrap ${log.action.includes('by -') ? 'bg-red-100 text-red-700' : 'bg-purple-100 text-purple-700'}`}>
+                          {log.action.match(/by (-?\d+(\.\d+)?)/)?.[1]} days
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        Adjusted on: {new Date(log.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute:'2-digit' })}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <h4 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-green-600" />
                 Comp-Off Grant History
               </h4>
               
@@ -160,7 +386,7 @@ export default function CompOffBalanceOverview() {
                   </div>
                 ) : (
                   getEmployeeCompOffs(selectedEmployee.id).map(grant => (
-                    <div key={grant.id} className="p-4 border border-gray-100 rounded-xl hover:border-purple-200 transition-colors bg-white shadow-sm">
+                    <div key={grant.id} className="p-4 border border-gray-100 rounded-xl hover:border-green-200 transition-colors bg-white shadow-sm">
                       <div className="flex justify-between items-start mb-2">
                         <span className="font-medium text-gray-900 text-sm">{grant.reason}</span>
                         <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold whitespace-nowrap">

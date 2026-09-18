@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Users, Mail, Calendar, ShieldCheck, Loader2, Search, Trash2, Filter, AlertTriangle, X, Edit, Phone, UserCog } from 'lucide-react';
 import { useManagers } from '../../hooks/useLeaves';
 import { useAuth } from '../../context/AuthContext';
+import { calculateTotalBalance } from '../../utils/leaveUtils';
 
 // Replaced inline style array with Tailwind classes per requirements
 const AVATAR_COLORS = [
@@ -187,7 +188,7 @@ export default function EmployeeTable({ filteredEmployees, isLoading, search, se
                 </td>
                 <td className="px-4 py-4 text-center whitespace-nowrap">
                   <div className="inline-flex items-center justify-center px-3 py-1 rounded-full text-sm font-bold bg-purple-100 text-[#7e57c2] border border-purple-200 shadow-sm">
-                    {(emp.available_leaves || 0) + (emp.comp_off_leaves || 0)} Days
+                    {calculateTotalBalance(emp)} Days
                   </div>
                 </td>
                 <td className="px-4 py-4 whitespace-nowrap">
@@ -239,7 +240,7 @@ export default function EmployeeTable({ filteredEmployees, isLoading, search, se
                     </div>
                   </div>
                   <div className="inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-[#7e57c2] border border-purple-200">
-                    {(emp.available_leaves || 0) + (emp.comp_off_leaves || 0)} Days
+                    {calculateTotalBalance(emp)} Days
                   </div>
                 </div>
                 <div className="space-y-2 mt-3">
