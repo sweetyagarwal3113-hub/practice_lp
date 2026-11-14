@@ -1,9 +1,7 @@
 import { useState } from 'react';
-import { Gift, PlusCircle, AlertCircle, Clock, CheckCircle2, XCircle, Wallet, CalendarPlus, X, Info } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { Gift, PlusCircle, AlertCircle, Clock, CheckCircle2, XCircle, Wallet, X } from 'lucide-react';
 import { useMyCompOffs } from '../hooks/useCompOff';
-import { useMyBalances, useMyRequests } from '../hooks/useLeaves';
-import { useEmployeeDashboard } from '../hooks/useEmployeeDashboard';
+import { useMyBalances } from '../hooks/useLeaves';
 import { Button } from '../components/ui/button';
 import RequestCompOffModal from '../components/employee-dashboard/RequestCompOffModal';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -11,23 +9,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 export default function EmployeeCompOff() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedCompOff, setSelectedCompOff] = useState(null);
-  const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
-  const { user } = useAuth();
   const { data: myCompOffs = [], isLoading } = useMyCompOffs();
   const { data: { available_leaves: availableLeaves = 0, comp_off_leaves: compOffLeaves = 0 } = {} } = useMyBalances();
-  const { data: myRequests = [], isLoading: loadingRequests } = useMyRequests();
-  const { total_leaves = 0, inProbation, monthsSinceJoining } = useEmployeeDashboard();
 
   const earnedCompOffs = myCompOffs
     .filter(req => req.status === 'approved')
     .reduce((sum, req) => sum + (req.daysGranted || 0), 0);
-
-  const usedLeaves = myRequests
-    .filter(req => req.status === 'approved')
-    .reduce((sum, req) => sum + (req.total_days || 0), 0);
-    
-  const standardLeavesEarned = total_leaves;
 
   const getStatusIcon = (status) => {
     console.log("[Frontend Component] Rendering getStatusIcon in EmployeeCompOff.jsx");
@@ -85,38 +73,26 @@ export default function EmployeeCompOff() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5 relative z-10 mx-auto max-w-5xl">
-          
-          {/* Card 1: Monthly Leaves */}
-          <div 
-            className="bg-blue-50/50 border border-blue-100 rounded-xl p-4 flex flex-col items-center text-center relative"
-          >
-            <CalendarPlus className="w-5 h-5 text-blue-500 mb-1.5" />
-            <h3 className="text-sm font-bold text-gray-700">Monthly Leaves ({new Date().toLocaleString('en-US', { month: 'long' })})</h3>
-            <p className="text-[11px] text-gray-500 mb-2 leading-tight h-6">Active leaves for this month</p>
-            <div className="text-3xl font-black text-gray-800">{isLoading || loadingRequests ? <Clock className="w-5 h-5 animate-spin text-gray-400" /> : availableLeaves}</div>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 relative z-10 mx-auto max-w-3xl">
 
-          {/* Card 2: Comp-Offs */}
-          <div 
+          {/* Card 1: Comp-Offs */}
+          <div
             className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-4 flex flex-col items-center text-center relative"
           >
-            <div className="hidden md:flex absolute -left-2 md:-left-[22px] top-1/2 -translate-y-1/2 w-6 h-6 bg-white rounded-full border border-gray-100 items-center justify-center text-gray-400 font-bold z-20 shadow-sm text-sm">+</div>
             <Gift className="w-5 h-5 text-emerald-500 mb-1.5" />
             <h3 className="text-sm font-bold text-gray-700">Extra Comp-Offs</h3>
             <p className="text-[11px] text-gray-500 mb-2 leading-tight h-6">Available days from extra work</p>
             <div className="text-3xl font-black text-gray-800">{isLoading ? <Clock className="w-5 h-5 animate-spin text-gray-400" /> : compOffLeaves}</div>
           </div>
 
-          {/* Card 3: Final Balance */}
+          {/* Card 2: Final Balance */}
           <div className="bg-gradient-to-br from-[#7e57c2] to-[#6b48a8] shadow-lg rounded-xl p-4 flex flex-col items-center text-center relative transform md:scale-[1.02] transition-transform">
-            <div className="hidden md:flex absolute -left-2 md:-left-[22px] top-1/2 -translate-y-1/2 w-6 h-6 bg-white rounded-full border border-gray-100 items-center justify-center text-[#7e57c2] font-black z-20 shadow-sm text-sm">=</div>
             <CheckCircle2 className="w-5 h-5 text-white mb-1.5" />
             <h3 className="text-sm font-bold text-white">Current Balance</h3>
             <p className="text-[11px] text-purple-200 mb-2 leading-tight h-6">Total days you can take off right now</p>
             <div className="text-4xl font-black text-white">{availableLeaves + compOffLeaves}</div>
           </div>
-          
+
         </div>
       </div>
 
@@ -270,61 +246,6 @@ export default function EmployeeCompOff() {
           </div>
         </div>
       )}
-      {/* Monthly Leaves Modal */}
-      {isMonthlyModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setIsMonthlyModalOpen(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="bg-blue-600 p-5 text-white flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <CalendarPlus className="w-6 h-6 text-blue-200" />
-                <div>
-                  <h3 className="font-bold text-lg">Monthly Leaves Status</h3>
-                  <p className="text-blue-200 text-xs">For {new Date().toLocaleString('en-US', { month: 'long' })}</p>
-                </div>
-              </div>
-              <button onClick={() => setIsMonthlyModalOpen(false)} className="text-blue-200 hover:text-white transition-colors bg-white/10 rounded-full p-1.5"><X className="w-5 h-5"/></button>
-            </div>
-            
-            <div className="p-6">
-              {inProbation ? (
-                <div className="bg-orange-50 border border-orange-200 rounded-xl p-5 mb-4 text-center space-y-3">
-                  <div className="w-12 h-12 bg-orange-100 text-orange-500 rounded-full flex items-center justify-center mx-auto mb-2">
-                    <Clock className="w-6 h-6" />
-                  </div>
-                  <h4 className="font-bold text-orange-800 text-lg">Under Probation</h4>
-                  <p className="text-sm text-orange-700 leading-relaxed">
-                    You are currently in your 6-month probation period ({monthsSinceJoining} months completed). Standard monthly leaves are not credited until probation is successfully completed.
-                  </p>
-                  <p className="text-xs font-semibold text-orange-600 uppercase tracking-wide mt-2 pt-3 border-t border-orange-200">
-                    Expected Allowance: 1 Day/Month
-                  </p>
-                </div>
-              ) : (
-                <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 mb-4 text-center space-y-3">
-                  <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-2">
-                    <CheckCircle2 className="w-6 h-6" />
-                  </div>
-                  <h4 className="font-bold text-blue-800 text-lg">Leave Credited</h4>
-                  <p className="text-sm text-blue-700 leading-relaxed mb-2">
-                    Your current Monthly Leave balance is <strong>{availableLeaves} day(s)</strong>.
-                  </p>
-                  <p className="text-xs text-blue-600 leading-relaxed bg-blue-100/50 p-2 rounded-lg">
-                    Your standard monthly allowance is <strong>{standardLeavesEarned} day(s)</strong> per month. 
-                  </p>
-                </div>
-              )}
-
-              <div className="text-center text-xs text-gray-500 mt-6 px-4">
-                Note: The company automatically processes standard allowances on the 1st of every month for non-probationary employees.
-              </div>
-            </div>
-            
-            <div className="p-4 border-t border-gray-50 bg-gray-50 flex justify-end">
-              <Button onClick={() => setIsMonthlyModalOpen(false)} variant="outline">Close</Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Extra Comp-Offs Summary Modal */}
       {isSummaryModalOpen && (
@@ -353,12 +274,12 @@ export default function EmployeeCompOff() {
                 <span className="text-gray-600 font-medium flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-red-400"/> Days Used/Deducted
                 </span>
-                <span className="text-lg font-bold text-red-500">- {earnedCompOffs - Math.max(0, availableLeaves - standardLeavesEarned)}</span>
+                <span className="text-lg font-bold text-red-500">- {earnedCompOffs - Math.max(0, compOffLeaves)}</span>
               </div>
               
               <div className="flex justify-between items-center py-4 bg-emerald-50 px-4 rounded-xl mt-2 border border-emerald-100">
                 <span className="text-emerald-800 font-bold">Active Available Balance</span>
-                <span className="text-2xl font-black text-emerald-600">{Math.max(0, availableLeaves - standardLeavesEarned)}</span>
+                <span className="text-2xl font-black text-emerald-600">{Math.max(0, compOffLeaves)}</span>
               </div>
 
               <div className="bg-gray-50 p-4 rounded-xl mt-4 text-sm text-gray-600 border border-gray-100">

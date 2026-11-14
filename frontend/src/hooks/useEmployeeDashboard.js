@@ -53,7 +53,6 @@ export function useEmployeeDashboard() {
     firstName: profile?.full_name?.split(' ')[0] || user?.full_name?.split(' ')[0] || 'Employee',
     greeting: getGreeting(),
     available_leaves: totalAvailable, // Send total as available_leaves for backward compatibility in some components
-    monthly_leaves: availablePaid,
     comp_off_leaves: compOffLeaves,
     total_leaves: profile?.total_leaves || 0
   };
